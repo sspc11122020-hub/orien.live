@@ -1,0 +1,13 @@
+{
+  "name": "orien-credential-finder",
+  "version": "1.0.0",
+  "description": "بحث ذكي عن بيانات اعتماد صالحة لخدمة Orien",
+  "main": "find-credentials.js",
+  "scripts": {
+    "start": "node find-credentials.js",
+    "test": "node find-credentials.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
